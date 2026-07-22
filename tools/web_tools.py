@@ -163,11 +163,16 @@ def _load_web_config() -> dict:
 # constant so the whitelist early-returns and the availability chokepoint
 # stay in sync.
 #
+# NOTE: ``crawl4ai`` is intentionally NOT in this set. It is a plugin-
+# registered provider under plugins/web/crawl4ai and is therefore handled
+# through the registry's is_available() path. Keeping it out avoids duplicating
+# its config/env detection here and lets its plugin.yaml drive discovery.
+#
 # NOTE: this intentionally includes ``xai``, which the registry's
 # ``_LEGACY_PREFERENCE`` does NOT — xai availability is probed via
 # ``has_xai_credentials()`` (env var OR auth.json OAuth), not a registered
-# WebSearchProvider. Keep the two sets aligned by hand: if xai ever ships as
-# a registered provider, drop it here so the registry path takes over.
+# WebSearchProvider plugin.
+
 _LEGACY_WEB_BACKENDS = frozenset(
     {"parallel", "firecrawl", "tavily", "exa", "searxng", "brave-free", "ddgs", "xai"}
 )
@@ -245,6 +250,7 @@ def _get_backend() -> str:
         ("firecrawl", _has_env("FIRECRAWL_API_KEY") or _has_env("FIRECRAWL_API_URL")),
         ("firecrawl", _is_tool_gateway_ready()),
         ("searxng", _has_env("SEARXNG_URL")),
+        ("crawl4ai", _has_env("CRAWL4AI_URL")),
         ("brave-free", _has_env("BRAVE_SEARCH_API_KEY")),
         ("ddgs", _ddgs_package_importable()),
     )
@@ -343,14 +349,20 @@ def _is_backend_available(backend: str) -> bool:
         # Cheap probe — env var OR auth.json has OAuth tokens. Must not
         # call resolve_xai_http_credentials() here because the OAuth path
         # can trigger a network token refresh, and _is_backend_available
-        # runs on every web_search dispatch + every `hermes tools` repaint.
+        # runs on every web_search dispatch + every `hermes tools` paint.
         try:
             from tools.xai_http import has_xai_credentials
+
             return has_xai_credentials()
         except Exception:
             return False
+    # Legacy probe for crawl4ai when the plugin is not registered.  The
+    # preferred path is the plugin under plugins/web/crawl4ai; this hardcoded
+    # check preserves auto-detection if a user sets CRAWL4AI_URL without the
+    # bundled plugin loaded.
+    if backend == "crawl4ai":
+        return _has_env("CRAWL4AI_URL")
     return False
-
 
 def _ddgs_package_importable() -> bool:
     """Return True when the ``ddgs`` Python package can be imported.
